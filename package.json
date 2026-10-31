@@ -1,0 +1,52 @@
+{
+  "name": "second-entry",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Enterprise Financial Automation & AI Governance Platform",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:seed": "tsx scripts/seed.ts",
+    "ml:evaluate": "tsx ml/train.ts",
+    "aws:validate": "tsx scripts/validate-aws.ts",
+    "aws:test-local": "vitest run tests/aws-worker.test.ts",
+    "verify": "npm run lint && npm run typecheck && npm test && npm run ml:evaluate && npm run aws:validate && npm run build"
+  },
+  "dependencies": {
+    "@aws-sdk/client-sqs": "^3.930.0",
+    "@electric-sql/pglite": "^0.3.10",
+    "drizzle-orm": "^0.45.4",
+    "lucide-react": "^0.548.0",
+    "next": "^16.0.1",
+    "postgres": "^3.4.7",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "recharts": "^3.3.0",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.0",
+    "@types/aws-lambda": "^8.10.156",
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@vitest/coverage-v8": "^4.0.6",
+    "eslint": "^9.39.0",
+    "eslint-config-next": "^16.0.1",
+    "jsdom": "^27.1.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.6"
+  }
+}
