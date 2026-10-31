@@ -1,0 +1,4 @@
+stdout | audit-probes/callback.probe.test.ts > CALLBACK / WORKER PROBES > C1 replay, re-delivery and cross-workspace behaviour of the signed callback
+C1 {"first":{"status":200,"body":"{\"accepted\":true}"},"replay":409,"replayBody":"{\"error\":\"duplicate key value violates unique constraint \\\"callback_nonces_pkey\\","redelivery":200,"completedThenFailed":200,"finalJobStatus":"failed","missing":400,"nonceKeptAfterFailure":0,"exceptionScores":[{"risk_score":0.82},{"risk_score":0.66}]}
+stdout | audit-probes/callback.probe.test.ts > CALLBACK / WORKER PROBES > C2 worker returns constant riskScore and re-delivery produces two callbacks
+C2 {"callbacks":3,"scores":[0.5,0.5,0.5]}

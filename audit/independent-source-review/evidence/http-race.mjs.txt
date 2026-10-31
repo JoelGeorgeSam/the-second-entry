@@ -1,0 +1,17 @@
+// Concurrency probe against the ISOLATED scratch server (port 3100) only.
+const BASE = "http://127.0.0.1:3100";
+for (let round = 1; round <= 3; round++) {
+  const demo = await fetch(BASE + "/api/session/demo", { redirect: "manual" });
+  const cookie = (demo.headers.get("set-cookie") || "").split(";")[0];
+  await fetch(BASE + "/app", { headers: { cookie } });
+  const pay = (id) => fetch(BASE + "/api/payments", { method: "POST", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ sourceEventId: id, invoiceReference: "INV-2026-083", amount: "1000.00", currency: "CAD" }) }).then(async r => (await r.json()).message);
+  const msgs = await Promise.all(Array.from({ length: 10 }, (_, i) => pay(`race-${round}-${i}`)));
+  const rec = await (await fetch(BASE + "/app/reconciliation", { headers: { cookie } })).text();
+  const rows = [...rec.matchAll(/<tr>(.*?)<\/tr>/g)].map(m => m[1]).filter(r => r.includes(`race-${round}-`));
+  const statuses = rows.map(r => (r.match(/badge badge-\w+">([^<]+)</) || [])[1]);
+  const inv = await (await fetch(BASE + "/app/invoices", { headers: { cookie } })).text();
+  const invRow = [...inv.matchAll(/<tr>(.*?)<\/tr>/g)].map(m => m[1]).find(r => r.includes("INV-2026-083")) || "";
+  const cells = [...invRow.matchAll(/<td[^>]*>(.*?)<\/td>/g)].map(m => m[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+  const tally = statuses.reduce((a, s) => (a[s] = (a[s] || 0) + 1, a), {});
+  console.log(`ROUND ${round}`, JSON.stringify({ apiOutcomes: msgs.reduce((a, s) => (a[s] = (a[s] || 0) + 1, a), {}), paymentStatuses: tally, invoice: { status: cells[4], total: cells[5], paid: cells[6], outstanding: cells[7] } }));
+}

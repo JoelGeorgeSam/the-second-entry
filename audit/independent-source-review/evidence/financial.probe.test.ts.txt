@@ -1,0 +1,134 @@
+import { describe, expect, it } from "vitest";
+import { ensureWorkspace, ingestAndReconcile, listInvoices, resolveException, runSimulation, confirmAndInvoice, createOrder } from "@/server/db/repository";
+import { database } from "@/server/db/client";
+import { calculateTax, money } from "@/domain/money";
+import type { Session } from "@/server/auth/session";
+
+const mk = (ws: string, role: Session["role"] = "finance_analyst"): Session => ({ userId: `u-${role}`, name: role, role, workspaceId: ws, expiresAt: Date.now() + 1e6 });
+const q = async (sql: string, p: unknown[] = []) => (await (await database()).query<any>(sql, p)).rows;
+
+describe.sequential("AUDIT PROBES", () => {
+  it("P1 concurrent payments against one invoice", async () => {
+    const ws = `p1-${Date.now()}`; const s = mk(ws); await ensureWorkspace(ws);
+    const [r1, r2] = await Promise.allSettled([
+      ingestAndReconcile(s, { sourceEventId: "race-a", amountCents: 542400, currency: "CAD", invoiceReference: "INV-2026-083" }),
+      ingestAndReconcile(s, { sourceEventId: "race-b", amountCents: 542400, currency: "CAD", invoiceReference: "INV-2026-083" }),
+    ]);
+    const inv = (await q("SELECT total_cents,paid_cents,status FROM invoices WHERE workspace_id=$1 AND invoice_number='INV-2026-083'", [ws]))[0];
+    const alloc = (await q("SELECT coalesce(sum(a.amount_cents),0) s, count(*) n FROM payment_allocations a JOIN invoices i ON i.id=a.invoice_id WHERE i.workspace_id=$1 AND i.invoice_number='INV-2026-083'", [ws]))[0];
+    const pays = await q("SELECT source_event_id,status FROM payments WHERE workspace_id=$1 AND source_event_id LIKE 'race-%' ORDER BY source_event_id", [ws]);
+    const exc = await q("SELECT count(*) n FROM exceptions e JOIN payments p ON p.id=e.payment_id WHERE p.workspace_id=$1 AND p.source_event_id LIKE 'race-%'", [ws]);
+    console.log("P1", JSON.stringify({ r1: r1.status, r2: r2.status, inv, alloc, pays, exceptions: exc[0] }));
+  });
+
+  it("P1b concurrent partial payments that together exceed balance", async () => {
+    const ws = `p1b-${Date.now()}`; const s = mk(ws); await ensureWorkspace(ws);
+    const res = await Promise.allSettled([1, 2, 3].map(i => ingestAndReconcile(s, { sourceEventId: `part-${i}`, amountCents: 300000, currency: "CAD", invoiceReference: "INV-2026-083" })));
+    const inv = (await q("SELECT total_cents,paid_cents,status FROM invoices WHERE workspace_id=$1 AND invoice_number='INV-2026-083'", [ws]))[0];
+    const alloc = (await q("SELECT coalesce(sum(a.amount_cents),0) s, count(*) n FROM payment_allocations a JOIN invoices i ON i.id=a.invoice_id WHERE i.workspace_id=$1 AND i.invoice_number='INV-2026-083'", [ws]))[0];
+    const pays = await q("SELECT source_event_id,status FROM payments WHERE workspace_id=$1 AND source_event_id LIKE 'part-%' ORDER BY source_event_id", [ws]);
+    console.log("P1b", JSON.stringify({ res: res.map(r => r.status), inv, alloc, pays }));
+  });
+
+  it("P2 concurrent replay of the same source event", async () => {
+    const ws = `p2-${Date.now()}`; const s = mk(ws); await ensureWorkspace(ws);
+    const res = await Promise.allSettled([1, 2].map(() => ingestAndReconcile(s, { sourceEventId: "dup-x", amountCents: 1000, currency: "CAD", invoiceReference: null })));
+    console.log("P2", JSON.stringify(res.map(r => r.status === "fulfilled" ? { ok: true, duplicate: r.value.duplicate } : { err: String((r as any).reason?.message).slice(0, 110) })));
+  });
+
+  it("P3 payment may reference a customer from another workspace", async () => {
+    const a = `p3a-${Date.now()}`, b = `p3b-${Date.now()}`; await ensureWorkspace(a); await ensureWorkspace(b);
+    const r = await ingestAndReconcile(mk(b), { sourceEventId: "xt-1", customerId: `cust-northstar${a}`, amountCents: 100, currency: "CAD", invoiceReference: null });
+    const row = (await q("SELECT workspace_id, customer_id FROM payments WHERE id=$1", [r.paymentId]))[0];
+    console.log("P3", JSON.stringify(row));
+    expect(row.customer_id).toBe(`cust-northstar${a}`);
+  });
+
+  it("P4 concurrent audit appends fork the hash chain", async () => {
+    const ws = `p4-${Date.now()}`; const s = mk(ws); await ensureWorkspace(ws);
+    await Promise.all([1, 2, 3, 4].map(i => ingestAndReconcile(s, { sourceEventId: `chain-${i}`, amountCents: 100 + i, currency: "CAD", invoiceReference: null })));
+    const rows = await q("SELECT previous_hash, count(*) n FROM audit_events WHERE workspace_id=$1 GROUP BY previous_hash HAVING count(*)>1", [ws]);
+    console.log("P4 forked previous_hash groups:", JSON.stringify(rows));
+  });
+
+  it("P5 voided invoice still accepts allocations (latent)", async () => {
+    const ws = `p5-${Date.now()}`; const s = mk(ws); await ensureWorkspace(ws);
+    await q("UPDATE invoices SET status='voided' WHERE workspace_id=$1 AND invoice_number='INV-2026-083'", [ws]);
+    const r = await ingestAndReconcile(s, { sourceEventId: "void-1", amountCents: 1000, currency: "CAD", invoiceReference: "INV-2026-083" });
+    const inv = (await q("SELECT status,paid_cents FROM invoices WHERE workspace_id=$1 AND invoice_number='INV-2026-083'", [ws]))[0];
+    console.log("P5", JSON.stringify({ outcome: r.decision?.outcome, inv }));
+  });
+
+  it("P6 guest role runs Workflow Lab; outcome constant", async () => {
+    const ws = `p6-${Date.now()}`; const g = mk(ws, "demo_guest"); await ensureWorkspace(ws);
+    const outs: string[] = [];
+    for (const sc of ["duplicate_payment", "worker_timeout", "queue_failure", "unauthorized_approval", "ai_unavailable", "conflicting_events"]) outs.push(`${sc}:${(await runSimulation(g, sc)).outcome}`);
+    const jobs = await q("SELECT status,attempt_count FROM processing_jobs WHERE workspace_id=$1", [ws]);
+    const outbox = await q("SELECT status,delivered_at FROM outbox_events WHERE workspace_id=$1", [ws]);
+    console.log("P6", JSON.stringify({ outs, jobs, outbox }));
+  });
+
+  it("P7 unauthorized_approval run by an administrator still reports denied", async () => {
+    const ws = `p7-${Date.now()}`; await ensureWorkspace(ws);
+    const r = await runSimulation(mk(ws, "administrator"), "unauthorized_approval");
+    console.log("P7", JSON.stringify(r.details));
+  });
+
+  it("P7b unauthorized_approval with no open exception still reports stateUnchanged", async () => {
+    const ws = `p7b-${Date.now()}`; await ensureWorkspace(ws);
+    await q("UPDATE exceptions SET status='resolved' WHERE workspace_id=$1", [ws]);
+    const r = await runSimulation(mk(ws, "administrator"), "unauthorized_approval");
+    console.log("P7b", JSON.stringify(r));
+  });
+
+  it("P8 resolving an overpayment exception changes no financial record", async () => {
+    const ws = `p8-${Date.now()}`; await ensureWorkspace(ws);
+    const before = await q("SELECT id,paid_cents,status FROM invoices WHERE workspace_id=$1 ORDER BY id", [ws]);
+    await resolveException(mk(ws, "finance_approver"), `exc-4001${ws}`, "Customer confirmed overpayment; refund pending");
+    const after = await q("SELECT id,paid_cents,status FROM invoices WHERE workspace_id=$1 ORDER BY id", [ws]);
+    const pay = (await q("SELECT status FROM payments WHERE id=$1", [`pay-3003${ws}`]))[0];
+    const exc = (await q("SELECT status FROM exceptions WHERE id=$1", [`exc-4001${ws}`]))[0];
+    console.log("P8", JSON.stringify({ invoicesUnchanged: JSON.stringify(before) === JSON.stringify(after), paymentStatus: pay.status, exceptionStatus: exc.status }));
+  });
+
+  it("P9 new exceptions get no ML score; seeded ones carry fixed scores", async () => {
+    const ws = `p9-${Date.now()}`; const s = mk(ws); await ensureWorkspace(ws);
+    await ingestAndReconcile(s, { sourceEventId: "ml-1", amountCents: 999999, currency: "CAD", invoiceReference: "INV-2026-083" });
+    const rows = await q("SELECT type,risk_score,model_version FROM exceptions WHERE workspace_id=$1 ORDER BY created_at", [ws]);
+    const inf = await q("SELECT count(*) n FROM inference_records WHERE workspace_id=$1", [ws]);
+    console.log("P9", JSON.stringify({ rows, inferenceRecords: inf[0] }));
+  });
+
+  it("P10 invoice past due date never becomes overdue", async () => {
+    const ws = `p10-${Date.now()}`; await ensureWorkspace(ws);
+    await q("UPDATE invoices SET due_date=CURRENT_DATE-10 WHERE workspace_id=$1 AND invoice_number='INV-2026-083'", [ws]);
+    const inv = (await listInvoices(ws)).find((i: any) => i.invoice_number === "INV-2026-083") as any;
+    console.log("P10", JSON.stringify({ status: inv.status }));
+  });
+
+  it("P11 tax precision at the upper validated bound", async () => {
+    const subtotal = 1000 * 99999999999;
+    const exact = (BigInt(subtotal) * 1300n + 5000n) / 10000n;
+    let got: string; try { got = String(calculateTax(money(subtotal), 1300).cents); } catch (e) { got = "throws: " + (e as Error).message; }
+    console.log("P11", JSON.stringify({ subtotal, exact: exact.toString(), got }));
+  });
+
+  it("P12 model registry row content", async () => {
+    const ws = `p12-${Date.now()}`; await ensureWorkspace(ws);
+    console.log("P12", JSON.stringify(await q("SELECT version,metrics,approved,status FROM model_versions")));
+  });
+
+  it("P13 concurrent double invoice issuance for one order", async () => {
+    const ws = `p13-${Date.now()}`; const s = mk(ws); await ensureWorkspace(ws);
+    const orderId = await createOrder(s, { customerId: `cust-aster${ws}`, description: "Race order", quantity: 1, unitPriceCents: 1000 });
+    const res = await Promise.allSettled([confirmAndInvoice(s, orderId), confirmAndInvoice(s, orderId)]);
+    const n = await q("SELECT count(*) n FROM invoices WHERE order_id=$1", [orderId]);
+    console.log("P13", JSON.stringify({ res: res.map(r => r.status === "fulfilled" ? "ok" : String((r as any).reason?.message).slice(0, 80)), invoices: n[0] }));
+  });
+
+  it("P14 order numbers can collide (Date.now last 6 digits) within a workspace", async () => {
+    const ws = `p14-${Date.now()}`; const s = mk(ws); await ensureWorkspace(ws);
+    const res = await Promise.allSettled([1, 2, 3].map(() => createOrder(s, { customerId: `cust-aster${ws}`, description: "Collide", quantity: 1, unitPriceCents: 100 })));
+    console.log("P14", JSON.stringify(res.map(r => r.status === "fulfilled" ? "ok" : String((r as any).reason?.message).slice(0, 90))));
+  });
+});

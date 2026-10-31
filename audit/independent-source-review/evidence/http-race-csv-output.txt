@@ -1,0 +1,3 @@
+CSV ROUND 1 {"accepted":[20,20,20],"statuses":{"exception":33,"partially reconciled":27},"impliedAllocatedCents":540000,"invoice":{"status":"partially paid","paid":"$5,400.00","outstanding":"$24.00"}}
+CSV ROUND 2 {"accepted":[20,20,20],"statuses":{"exception":33,"partially reconciled":27},"impliedAllocatedCents":540000,"invoice":{"status":"partially paid","paid":"$5,400.00","outstanding":"$24.00"}}
+CSV ROUND 3 {"accepted":[20,20,20],"statuses":{"exception":33,"partially reconciled":27},"impliedAllocatedCents":540000,"invoice":{"status":"partially paid","paid":"$5,400.00","outstanding":"$24.00"}}

@@ -1,0 +1,41 @@
+import { describe, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
+import { signCallback } from "../aws/signing";
+import { handler } from "../aws/worker";
+import { ensureWorkspace, runSimulation } from "@/server/db/repository";
+import { database } from "@/server/db/client";
+import type { SQSEvent } from "aws-lambda";
+
+const secret = "c".repeat(32);
+process.env.CALLBACK_SIGNING_SECRET = secret;
+const q = async (sql: string, p: unknown[] = []) => (await (await database()).query<any>(sql, p)).rows;
+
+describe.sequential("CALLBACK / WORKER PROBES", () => {
+  it("C1 replay, re-delivery and cross-workspace behaviour of the signed callback", async () => {
+    const { POST } = await import("@/app/api/internal/jobs/result/route");
+    const ws = `c1-${Date.now()}`; await ensureWorkspace(ws);
+    await runSimulation({ userId: "u", name: "n", role: "finance_analyst", workspaceId: ws, expiresAt: Date.now() + 1e6 }, "worker_timeout");
+    const job = (await q("SELECT id FROM processing_jobs WHERE workspace_id=$1", [ws]))[0].id;
+    const body = JSON.stringify({ version: 1, jobId: job, processingId: "msg-1", modelVersion: "logreg-synth-1.0.0", riskScore: 0.5, status: "completed", correlationId: "corr", completedAt: new Date().toISOString() });
+    const send = async (nonce: string, b = body) => { const ts = new Date().toISOString(); const r = await POST(new Request("http://x/api/internal/jobs/result", { method: "POST", body: b, headers: { "x-se-timestamp": ts, "x-se-nonce": nonce, "x-se-signature": signCallback(b, ts, nonce, secret) } })); return { status: r.status, body: await r.text() }; };
+    const first = await send("nonce-1");
+    const replay = await send("nonce-1");
+    const redelivery = await send("nonce-2"); // same result, new nonce (what the worker does on retry)
+    const failed = await send("nonce-3", body.replace('"completed"', '"failed"'));
+    const missing = await send("nonce-4", body.replace(job, "job-does-not-exist"));
+    const nonceKeptAfterFailure = (await q("SELECT count(*) n FROM callback_nonces WHERE nonce='nonce-4'"))[0].n;
+    const jobRow = (await q("SELECT status,result FROM processing_jobs WHERE id=$1", [job]))[0];
+    const excScores = await q("SELECT risk_score FROM exceptions WHERE workspace_id=$1", [ws]);
+    console.log("C1", JSON.stringify({ first, replay: replay.status, replayBody: replay.body.slice(0, 80), redelivery: redelivery.status, completedThenFailed: failed.status, finalJobStatus: jobRow.status, missing: missing.status, nonceKeptAfterFailure, exceptionScores: excScores }));
+  });
+
+  it("C2 worker returns constant riskScore and re-delivery produces two callbacks", async () => {
+    process.env.RESULTS_CALLBACK_URL = "https://example.test/cb";
+    const bodies: any[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_u: string, init: any) => { bodies.push(JSON.parse(init.body)); return { ok: true, status: 200 }; }));
+    const rec = (exceptionId: string, mid: string) => ({ messageId: mid, receiptHandle: "r", body: JSON.stringify({ version: 1, jobId: "job-x", workspaceId: "w", exceptionId, correlationId: "c", requestedAt: new Date().toISOString() }), attributes: {} as any, messageAttributes: {}, md5OfBody: "", eventSource: "aws:sqs", eventSourceARN: "", awsRegion: "" });
+    await handler({ Records: [rec("exc-benign", "m1"), rec("exc-suspicious", "m2"), rec("exc-benign", "m1")] } as SQSEvent);
+    vi.unstubAllGlobals();
+    console.log("C2", JSON.stringify({ callbacks: bodies.length, scores: bodies.map(b => b.riskScore) }));
+  });
+});

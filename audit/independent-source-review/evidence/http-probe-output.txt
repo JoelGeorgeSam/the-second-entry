@@ -1,0 +1,17 @@
+H1 documented admin login under next start {"status":401,"body":"{\"error\":\"Invalid credentials or local accounts are disabled\"}"}
+H2 malformed login body {"status":500}
+H3 forged admin cookie -> /app/settings {"status":200,"rendersAdministrator":true,"rendersForgedName":true}
+H3b forged admin approves exception {"status":200,"body":"{\"message\":\"Exception resolution approved and audited\"}"}
+H4 guest session {"status":307,"role":"demo_guest","ws":"demo-da62f66"}
+H4 two concurrent exact payments via HTTP [{"status":201,"body":"Payment ingested: auto_matched"},{"status":201,"body":"Payment ingested: exception"}]
+H4 invoice page shows INV-2026-083 paid {"paidBadge":true}
+H4 both race payments shown reconciled {"a":true,"b":true}
+H5 concurrent replay [{"status":201,"body":"{\"message\":\"Payment ingested: exception\",\"result\":{\"duplicate\":false,\"paymentId\":\"pay-98127dc1-a4a1-47c7-904f-e226f5a4afa8\",\"decision\":{\"outcome\":\"exception\",\"allocationCents\":0,\"exceptionType\":\"unmatched_payment\",\"reason\":\"No unique invoice matched the supplied reference.\"}}}"},{"status":200,"body":"{\"message\":\"Duplicate delivery ignored\",\"result\":{\"duplicate\":true,\"paymentId\":\"pay-98127dc1-a4a1-47c7-904f-e226f5a4afa8\"}}"}]
+H6 bundled samples/payments.csv import {"status":200,"body":{"accepted":1,"rejected":[{"row":2,"error":"insert or update on table \"payments\" violates foreign key constraint \"payments_customer_id_fkey\""},{"row":3,"error":"insert or update on table \"payments\" violates foreign key constraint \"payments_customer_id_fkey\""},{"row":5,"error":"amount_cents must be a positive integer"}],"total":4}}
+H7 guest workflow lab {"status":200,"body":{"message":"Simulation complete: invariant_preserved","result":{"workflowId":"flow-f15d5232-15b9-49d1-a36f-2783cd61d4cd","outcome":"invariant_preserved","details":{"providerStatus":"unavailable","fallback":"deterministic evidence summary","financialProcessing":"unaffected","fakeOutputGenerated":false}}}}
+H8 guest approval {"status":403,"body":"{\"error\":\"Role demo_guest cannot perform approve\"}"}
+H9 unauthenticated payment {"status":401}
+H10 callback with no CALLBACK_SIGNING_SECRET {"status":401}
+H11 text/plain body from foreign Origin accepted? {"status":201}
+H12 public 'Explore architecture' link {"status":307,"location":"/login"}
+H13 headers {"csp":null,"xfo":null,"hsts":null}

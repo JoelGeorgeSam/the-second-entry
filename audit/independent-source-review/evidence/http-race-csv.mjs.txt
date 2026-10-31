@@ -1,0 +1,18 @@
+// Concurrency probe (two parallel CSV imports) against the ISOLATED scratch server (port 3100) only.
+const BASE = "http://127.0.0.1:3100";
+for (let round = 1; round <= 3; round++) {
+  const demo = await fetch(BASE + "/api/session/demo", { redirect: "manual" });
+  const cookie = (demo.headers.get("set-cookie") || "").split(";")[0];
+  await fetch(BASE + "/app", { headers: { cookie } });
+  const csv = (tag) => ["source_event_id,customer_id,invoice_reference,amount_cents,currency", ...Array.from({ length: 20 }, (_, i) => `csv-${round}-${tag}-${i},,INV-2026-083,20000,CAD`)].join("\n");
+  const imp = (tag) => fetch(BASE + "/api/payments/import", { method: "POST", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ csv: csv(tag) }) }).then(r => r.json());
+  const results = await Promise.all([imp("a"), imp("b"), imp("c")]);
+  const rec = await (await fetch(BASE + "/app/reconciliation", { headers: { cookie } })).text();
+  const rows = [...rec.matchAll(/<tr>(.*?)<\/tr>/g)].map(m => m[1]).filter(r => r.includes(`csv-${round}-`));
+  const tally = rows.map(r => (r.match(/badge badge-\w+">([^<]+)</) || [])[1]).reduce((a, s) => (a[s] = (a[s] || 0) + 1, a), {});
+  const inv = await (await fetch(BASE + "/app/invoices", { headers: { cookie } })).text();
+  const invRow = [...inv.matchAll(/<tr>(.*?)<\/tr>/g)].map(m => m[1]).find(r => r.includes("INV-2026-083")) || "";
+  const cells = [...invRow.matchAll(/<td[^>]*>(.*?)<\/td>/g)].map(m => m[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+  const partial = tally["partially reconciled"] || 0, full = tally["reconciled"] || 0;
+  console.log(`CSV ROUND ${round}`, JSON.stringify({ accepted: results.map(r => r.accepted), statuses: tally, impliedAllocatedCents: (partial + full) * 20000, invoice: { status: cells[4], paid: cells[6], outstanding: cells[7] } }));
+}

@@ -1,0 +1,32 @@
+stdout | audit-probes/financial.probe.test.ts > AUDIT PROBES > P1 concurrent payments against one invoice
+P1 {"r1":"fulfilled","r2":"fulfilled","inv":{"total_cents":542400,"paid_cents":542400,"status":"paid"},"alloc":{"s":"1084800","n":2},"pays":[{"source_event_id":"race-a","status":"reconciled"},{"source_event_id":"race-b","status":"reconciled"}],"exceptions":{"n":0}}
+stdout | audit-probes/financial.probe.test.ts > AUDIT PROBES > P1b concurrent partial payments that together exceed balance
+P1b {"res":["fulfilled","fulfilled","fulfilled"],"inv":{"total_cents":542400,"paid_cents":300000,"status":"partially_paid"},"alloc":{"s":"900000","n":3},"pays":[{"source_event_id":"part-1","status":"partially_reconciled"},{"source_event_id":"part-2","status":"partially_reconciled"},{"source_event_id":"part-3","status":"partially_reconciled"}]}
+stdout | audit-probes/financial.probe.test.ts > AUDIT PROBES > P2 concurrent replay of the same source event
+P2 [{"ok":true,"duplicate":false},{"err":"duplicate key value violates unique constraint \"payments_workspace_id_source_event_id_key\""}]
+stdout | audit-probes/financial.probe.test.ts > AUDIT PROBES > P3 payment may reference a customer from another workspace
+P3 {"workspace_id":"p3b-1793381846467","customer_id":"cust-northstarp3a-1793381846467"}
+stdout | audit-probes/financial.probe.test.ts > AUDIT PROBES > P4 concurrent audit appends fork the hash chain
+P4 forked previous_hash groups: [{"previous_hash":"34d5889d7cf9aea537f3a4354f7ce28c39a65b9ab9b022791bf4ae14b716b8e8","n":4}]
+stdout | audit-probes/financial.probe.test.ts > AUDIT PROBES > P5 voided invoice still accepts allocations (latent)
+P5 {"outcome":"partial_match","inv":{"status":"partially_paid","paid_cents":1000}}
+stdout | audit-probes/financial.probe.test.ts > AUDIT PROBES > P6 guest role runs Workflow Lab; outcome constant
+P6 {"outs":["duplicate_payment:invariant_preserved","worker_timeout:invariant_preserved","queue_failure:invariant_preserved","unauthorized_approval:invariant_preserved","ai_unavailable:invariant_preserved","conflicting_events:invariant_preserved"],"jobs":[{"status":"retry_pending","attempt_count":1},{"status":"delivery_pending","attempt_count":0}],"outbox":[{"status":"pending","delivered_at":null}]}
+stdout | audit-probes/financial.probe.test.ts > AUDIT PROBES > P7 unauthorized_approval run by an administrator still reports denied
+P7 {"exceptionId":"exc-4001p7-1793381846672","role":"finance_analyst","denied":true,"stateUnchanged":true}
+stdout | audit-probes/financial.probe.test.ts > AUDIT PROBES > P7b unauthorized_approval with no open exception still reports stateUnchanged
+P7b {"workflowId":"flow-7cab5361-5df8-4693-84c8-076cc7902559","outcome":"invariant_preserved","details":{"role":"finance_analyst","denied":true,"stateUnchanged":false}}
+stdout | audit-probes/financial.probe.test.ts > AUDIT PROBES > P8 resolving an overpayment exception changes no financial record
+P8 {"invoicesUnchanged":true,"paymentStatus":"exception","exceptionStatus":"resolved"}
+stdout | audit-probes/financial.probe.test.ts > AUDIT PROBES > P9 new exceptions get no ML score; seeded ones carry fixed scores
+P9 {"rows":[{"type":"overpayment","risk_score":0.82,"model_version":"logreg-synth-1.0.0"},{"type":"unmatched_payment","risk_score":0.66,"model_version":"logreg-synth-1.0.0"},{"type":"overpayment","risk_score":null,"model_version":null}],"inferenceRecords":{"n":0}}
+stdout | audit-probes/financial.probe.test.ts > AUDIT PROBES > P10 invoice past due date never becomes overdue
+P10 {"status":"issued"}
+stdout | audit-probes/financial.probe.test.ts > AUDIT PROBES > P11 tax precision at the upper validated bound
+P11 {"subtotal":99999999999000,"exact":"12999999999870","got":"12999999999870"}
+stdout | audit-probes/financial.probe.test.ts > AUDIT PROBES > P12 model registry row content
+P12 [{"version":"1.0.0","metrics":{"status":"run npm run ml:evaluate"},"approved":true,"status":"local"}]
+stdout | audit-probes/financial.probe.test.ts > AUDIT PROBES > P13 concurrent double invoice issuance for one order
+P13 {"res":["ok","duplicate key value violates unique constraint \"invoices_order_id_key\""],"invoices":{"n":1}}
+stdout | audit-probes/financial.probe.test.ts > AUDIT PROBES > P14 order numbers can collide (Date.now last 6 digits) within a workspace
+P14 ["ok","duplicate key value violates unique constraint \"orders_workspace_id_order_number_key\"","ok"]
