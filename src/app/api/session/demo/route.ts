@@ -1,0 +1,2 @@
+import { NextResponse } from "next/server";import { demoSession,sessionCookie,signSession } from "@/server/auth/session";import { ensureWorkspace } from "@/server/db/repository";
+export async function GET(request:Request){const incoming=new URL(request.url);const host=request.headers.get("host")||incoming.host;const session=demoSession();await ensureWorkspace(session.workspaceId);const response=NextResponse.redirect(new URL("/app",`${incoming.protocol}//${host}`));response.cookies.set(sessionCookie.name,signSession(session),sessionCookie.options);return response;}

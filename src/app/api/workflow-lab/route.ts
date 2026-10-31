@@ -1,0 +1,4 @@
+import { NextResponse } from "next/server";import { z } from "zod";import { getOptionalSession as getSession } from "@/server/auth/session";import { runSimulation } from "@/server/db/repository";import { apiError } from "@/server/api-response";
+import { validateJsonMutation } from "@/server/request-security";
+const Scenario=z.enum(["duplicate_payment","worker_timeout","queue_failure","unauthorized_approval","ai_unavailable","conflicting_events"]);
+export async function POST(request:Request){const denied=validateJsonMutation(request);if(denied)return denied;try{const session=await getSession();if(!session)return NextResponse.json({error:"Authentication required"},{status:401});const{scenario}=z.object({scenario:Scenario}).parse(await request.json());const result=await runSimulation(session,scenario);return NextResponse.json({message:`Simulation complete: ${result.outcome}`,result});}catch(e){return apiError(e)}}

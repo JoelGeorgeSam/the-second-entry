@@ -1,0 +1,5 @@
+source_event_id,customer_code,invoice_reference,amount_cents,currency
+sample-correct-001,northstar,INV-2026-083,542400,CAD
+sample-partial-002,aster,INV-2026-082,50000,CAD
+sample-missing-003,,UNKNOWN-900,89500,CAD
+sample-invalid-004,aster,INV-2026-082,-100,CAD

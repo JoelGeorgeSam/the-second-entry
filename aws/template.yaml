@@ -1,0 +1,62 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Second Entry risk-analysis worker (deployment requires explicit authorization)
+Parameters:
+  ResultsCallbackUrl: { Type: String }
+  CallbackSigningSecretParameterName:
+    Type: String
+    Description: Existing SSM SecureString parameter name (deployment is not performed by this project)
+Resources:
+  RiskDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties: { MessageRetentionPeriod: 1209600 }
+  RiskQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 60
+      RedrivePolicy: { deadLetterTargetArn: !GetAtt RiskDeadLetterQueue.Arn, maxReceiveCount: 3 }
+  RiskWorker:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints: [aws/worker.ts]
+        Minify: true
+        Target: es2022
+    Properties:
+      Runtime: nodejs22.x
+      CodeUri: ../
+      Handler: aws/worker.handler
+      MemorySize: 256
+      Timeout: 15
+      ReservedConcurrentExecutions: 2
+      Environment:
+        Variables:
+          RESULTS_CALLBACK_URL: !Ref ResultsCallbackUrl
+          CALLBACK_SIGNING_SECRET: !Sub '{{resolve:ssm-secure:${CallbackSigningSecretParameterName}}}'
+          MODEL_VERSION: logreg-synth-1.0.0
+      Events:
+        RiskJobs:
+          Type: SQS
+          Properties: { Queue: !GetAtt RiskQueue.Arn, BatchSize: 5, FunctionResponseTypes: [ReportBatchItemFailures] }
+      Policies:
+        - SQSPollerPolicy: { QueueName: !GetAtt RiskQueue.QueueName }
+  WorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub '/aws/lambda/${RiskWorker}', RetentionInDays: 7 }
+  RiskDeadLetterAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Risk analysis dead-letter queue contains messages
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions: [{ Name: QueueName, Value: !GetAtt RiskDeadLetterQueue.QueueName }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+Outputs:
+  RiskQueueUrl: { Value: !Ref RiskQueue }
+  RiskDeadLetterQueueUrl: { Value: !Ref RiskDeadLetterQueue }
