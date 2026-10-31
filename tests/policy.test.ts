@@ -1,0 +1,2 @@
+import { describe,expect,it } from "vitest";import { can,requirePermission } from "@/domain/policy";
+describe("server authorization policy",()=>{it("allows approvers to approve",()=>expect(can("finance_approver","approve")).toBe(true));it("denies analysts and guests approval",()=>{expect(can("finance_analyst","approve")).toBe(false);expect(()=>requirePermission("demo_guest","approve")).toThrow(/cannot perform/) });it("lets isolated guests exercise non-approval workflows",()=>expect(can("demo_guest","ingest_payment")).toBe(true))});
