@@ -40,7 +40,7 @@ A recoverable pre-migration copy of the original local PGlite directory was crea
 - SAM CLI is not installed, and no live AWS SQS/Lambda/IAM/CloudWatch resource was contacted. `sam validate --lint` and live callback reachability remain external verification steps if AWS stays in release scope.
 - Vercel and AWS are not provisioned or deployed.
 - Customer creation, multi-line order editing, explicit confirm/cancel, invoice detail/history/search/filter, persisted overdue scheduling, broad analytics, and PDF export remain outside the implemented release slice. Product claims have been narrowed accordingly; decide which are required before public release.
-- The one-minute Vercel Cron schedule must be checked against the selected Vercel plan before deployment and adjusted if that plan has a lower frequency limit.
+- The checked-in Vercel Cron runs daily at 00:00 UTC for Hobby-plan compatibility. A production workload needing lower dispatch latency requires a Pro schedule or a separate worker runtime.
 
 ## Deployment gate
 
